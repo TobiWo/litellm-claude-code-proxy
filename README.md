@@ -122,3 +122,19 @@ curl -X POST http://localhost:4000/v1/messages \
 ## How it works
 
 The `litellm_config.yaml` uses a wildcard (`model_name: "*"`) so any model name sent by the client is routed to your single Azure deployment. The `start_proxy.sh` script uses `uv run` with `UV_NATIVE_TLS=true` to use the system certificate store, avoiding SSL issues behind corporate proxies.
+
+## Running with Docker
+
+### Build the image
+
+```bash
+docker build -t litellm-claude-code-proxy .
+```
+
+### Run the container
+
+```bash
+docker run --env-file .env -p 4000:4000 litellm-claude-code-proxy
+```
+
+The container reads all configuration from environment variables via the `.env` file. Override the port by setting `LITELLM_PORT` in your `.env` and adjusting the `-p` mapping accordingly.
