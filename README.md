@@ -60,6 +60,8 @@ claude
 
 Claude Code needs two environment variables to connect through the proxy. You can set them in different ways depending on your workflow.
 
+See also the official LiteLLM guide: [Use Claude Code with Non-Anthropic Models](https://docs.litellm.ai/docs/tutorials/claude_non_anthropic_models).
+
 ### Option A: Environment variables (per session)
 
 Set them in your shell before launching Claude Code:
@@ -138,3 +140,12 @@ docker run --env-file .env -p 4000:4000 litellm-claude-code-proxy
 ```
 
 The container reads all configuration from environment variables via the `.env` file. Override the port by setting `LITELLM_PORT` in your `.env` and adjusting the `-p` mapping accordingly.
+
+## References
+
+- [LiteLLM Documentation](https://docs.litellm.ai/)
+- [Proxy Quick Start](https://docs.litellm.ai/docs/proxy/quick_start)
+- [Proxy CLI](https://docs.litellm.ai/docs/proxy/cli)
+- [Proxy Config Settings](https://docs.litellm.ai/docs/proxy/config_settings)
+- [Docker Quick Start & Model List Specification](https://docs.litellm.ai/docs/proxy/docker_quick_start#model-list-specification)
+- [Use Claude Code with Non-Anthropic Models](https://docs.litellm.ai/docs/tutorials/claude_non_anthropic_models)
