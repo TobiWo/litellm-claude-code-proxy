@@ -1,14 +1,7 @@
-FROM python:3.12-slim
+FROM docker.litellm.ai/berriai/litellm:main-stable
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-WORKDIR /app
-
-COPY litellm_config.yaml start_proxy.sh ./
-
-RUN chmod +x start_proxy.sh
+COPY litellm_config.yaml /app/config.yaml
 
 EXPOSE 4000
 
-CMD ["./start_proxy.sh"]
+CMD ["--port", "4000", "--config", "/app/config.yaml"]

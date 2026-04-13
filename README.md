@@ -127,6 +127,8 @@ The `litellm_config.yaml` uses a wildcard (`model_name: "*"`) so any model name 
 
 ## Running with Docker
 
+The Dockerfile uses the [official LiteLLM Docker image](https://docs.litellm.ai/docs/proxy/deploy) — no need to install uv or Python separately.
+
 ### Build the image
 
 ```bash
@@ -139,7 +141,18 @@ docker build -t litellm-claude-code-proxy .
 docker run --env-file .env -p 4000:4000 litellm-claude-code-proxy
 ```
 
-The container reads all configuration from environment variables via the `.env` file. Override the port by setting `LITELLM_PORT` in your `.env` and adjusting the `-p` mapping accordingly.
+Or skip the build entirely and run the official image directly:
+
+```bash
+docker run \
+  --env-file .env \
+  -v $(pwd)/litellm_config.yaml:/app/config.yaml \
+  -p 4000:4000 \
+  docker.litellm.ai/berriai/litellm:main-stable \
+  --config /app/config.yaml --port 4000
+```
+
+The container reads all configuration from environment variables via the `.env` file.
 
 ## References
 
