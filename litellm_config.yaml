@@ -1,0 +1,10 @@
+litellm_settings:
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+
+model_list:
+  - model_name: "*"
+    litellm_params:
+      model: "os.environ/AZURE_OPENAI_DEPLOYMENT"
+      api_key: "os.environ/AZURE_OPENAI_API_KEY"
+      api_base: "os.environ/AZURE_OPENAI_ENDPOINT"
+      api_version: "os.environ/AZURE_OPENAI_API_VERSION"
