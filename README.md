@@ -26,6 +26,10 @@ AZURE_OPENAI_API_VERSION=preview
 LITELLM_PORT=4000
 LITELLM_MASTER_KEY=sk-foo-bar-baz
 LITELLM_LOCAL_MODEL_COST_MAP=true
+
+POSTGRES_USER=litellm
+POSTGRES_PASSWORD=litellm
+POSTGRES_DB=litellm
 ```
 
 | Variable | Description |
@@ -37,6 +41,9 @@ LITELLM_LOCAL_MODEL_COST_MAP=true
 | `LITELLM_PORT` | Port for the proxy (default: `4000`) |
 | `LITELLM_MASTER_KEY` | Auth token for the proxy — used by clients to authenticate against the LiteLLM proxy |
 | `LITELLM_LOCAL_MODEL_COST_MAP` | Set to `true` to skip fetching the remote cost map (avoids SSL errors behind corporate proxies) |
+| `POSTGRES_USER` | PostgreSQL username (default: `litellm`, used by Docker Compose) |
+| `POSTGRES_PASSWORD` | PostgreSQL password (default: `litellm`, used by Docker Compose) |
+| `POSTGRES_DB` | PostgreSQL database name (default: `litellm`, used by Docker Compose) |
 
 ### 2. Start the proxy
 
@@ -153,6 +160,41 @@ docker run \
 ```
 
 The container reads all configuration from environment variables via the `.env` file.
+
+## Running with Docker Compose (Proxy + Database)
+
+Docker Compose sets up both the LiteLLM proxy and a PostgreSQL database, which enables virtual keys, spend tracking, and other DB-backed features.
+
+### 1. Configure `.env`
+
+Make sure your `.env` includes the database variables (see `.env.example`):
+
+```env
+POSTGRES_USER=litellm
+POSTGRES_PASSWORD=litellm
+POSTGRES_DB=litellm
+```
+
+The `DATABASE_URL` is assembled automatically from these variables in `docker-compose.yml` — you don't need to set it yourself.
+
+### 2. Start the stack
+
+```bash
+docker compose up --build
+```
+
+This starts:
+- **litellm** — the proxy on port `4000` (override with `LITELLM_PORT`)
+- **db** — PostgreSQL 16 with a persistent `pgdata` volume
+
+The proxy waits for Postgres to be healthy before starting.
+
+### 3. Stop / clean up
+
+```bash
+docker compose down          # stop containers (data is preserved in the volume)
+docker compose down -v       # stop containers and delete the database volume
+```
 
 ## References
 
