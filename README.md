@@ -27,6 +27,9 @@ LITELLM_PORT=4000
 LITELLM_MASTER_KEY=sk-foo-bar-baz
 LITELLM_LOCAL_MODEL_COST_MAP=true
 
+UI_USERNAME=litellm
+UI_PASSWORD=litellm
+
 POSTGRES_USER=litellm
 POSTGRES_PASSWORD=litellm
 POSTGRES_DB=litellm
@@ -41,9 +44,13 @@ POSTGRES_DB=litellm
 | `LITELLM_PORT` | Port for the proxy (default: `4000`) |
 | `LITELLM_MASTER_KEY` | Auth token for the proxy — used by clients to authenticate against the LiteLLM proxy |
 | `LITELLM_LOCAL_MODEL_COST_MAP` | Set to `true` to skip fetching the remote cost map (avoids SSL errors behind corporate proxies) |
+| `UI_USERNAME` | Username for the LiteLLM admin UI at `/ui` (default: `litellm`) |
+| `UI_PASSWORD` | Password for the LiteLLM admin UI at `/ui` (default: `litellm`) |
 | `POSTGRES_USER` | PostgreSQL username (default: `litellm`, used by Docker Compose) |
 | `POSTGRES_PASSWORD` | PostgreSQL password (default: `litellm`, used by Docker Compose) |
 | `POSTGRES_DB` | PostgreSQL database name (default: `litellm`, used by Docker Compose) |
+
+> **Security note:** The default values for `LITELLM_MASTER_KEY`, `UI_PASSWORD`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` are **not secure**. If you expose this proxy beyond localhost (e.g. on a shared network or in production), replace them with strong, unique values.
 
 ### 2. Start the proxy
 
