@@ -1,28 +1,29 @@
 # LiteLLM Claude Code Proxy
 
-A LiteLLM proxy that routes any model request to your Azure AI Foundry deployment. Useful for running Claude Code against an AI model hosted on Azure Foundry.
+Routes Claude Code through your GitHub Copilot subscription. Claude Code points at the local proxy as if it were Anthropic's API; LiteLLM translates and forwards requests to GitHub Copilot.
+
+## Acknowledgments
+
+This is a fork of [National Bank Belgium's LiteLLM Claude Code Proxy](https://github.com/NationalBankBelgium/litellm-claude-code-proxy). It is based on [dsebastiens tutorial](https://www.dsebastien.net/claude-code-on-github-copilot-subscription/). I optimized the workflow and the documentation quite a bit and extended for further shortcomings.
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) installed
-- An Azure AI Foundry deployment with an API key
+* A GitHub Copilot subscription (personal or enterprise)
+* [uv](https://docs.astral.sh/uv/) installed
+* Python 3.11–3.13 in PATH (3.14 is not supported — some dependency incompatibility)
+* A virtual environment is recommended (conda, venv, etc.)
 
 ## Setup
 
-### 1. Create the `.env` file
+### 1. Configure `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your values:
+Edit `.env` if wanted:
 
 ```env
-AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_API_KEY=
-AZURE_OPENAI_DEPLOYMENT=azure/responses/gpt-5.3-codex
-AZURE_OPENAI_API_VERSION=preview
-
 LITELLM_PORT=4000
 LITELLM_MASTER_KEY=sk-foo-bar-baz
 LITELLM_LOCAL_MODEL_COST_MAP=true
@@ -36,59 +37,46 @@ POSTGRES_DB=litellm
 ```
 
 | Variable | Description |
-|---|---|
-| `AZURE_OPENAI_ENDPOINT` | Your Azure AI Foundry endpoint URL |
-| `AZURE_OPENAI_API_KEY` | API key for the endpoint |
-| `AZURE_OPENAI_DEPLOYMENT` | Model deployment name with provider prefix (e.g. `azure/responses/gpt-5.3-codex`) |
-| `AZURE_OPENAI_API_VERSION` | Azure API version (`preview` for Codex models, or a dated version like `2025-03-01-preview`) |
+| --- | --- |
 | `LITELLM_PORT` | Port for the proxy (default: `4000`) |
-| `LITELLM_MASTER_KEY` | Auth token for the proxy — used by clients to authenticate against the LiteLLM proxy |
-| `LITELLM_LOCAL_MODEL_COST_MAP` | Set to `true` to skip fetching the remote cost map (avoids SSL errors behind corporate proxies) |
-| `UI_USERNAME` | Username for the LiteLLM admin UI at `/ui` (default: `litellm`) |
-| `UI_PASSWORD` | Password for the LiteLLM admin UI at `/ui` (default: `litellm`) |
-| `POSTGRES_USER` | PostgreSQL username (default: `litellm`, used by Docker Compose) |
-| `POSTGRES_PASSWORD` | PostgreSQL password (default: `litellm`, used by Docker Compose) |
-| `POSTGRES_DB` | PostgreSQL database name (default: `litellm`, used by Docker Compose) |
+| `LITELLM_MASTER_KEY` | Bearer token clients use to authenticate against the proxy |
+| `LITELLM_LOCAL_MODEL_COST_MAP` | Set to `true` to skip the remote cost map fetch (avoids SSL errors behind corporate proxies) |
+| `UI_USERNAME` / `UI_PASSWORD` | Credentials for the LiteLLM admin UI at `/ui` |
+| `POSTGRES_*` | PostgreSQL config (Docker Compose only) |
 
-> **Security note:** The default values for `LITELLM_MASTER_KEY`, `UI_PASSWORD`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` are **not secure**. If you expose this proxy beyond localhost (e.g. on a shared network or in production), replace them with strong, unique values.
+> **Security note:** The default values for `LITELLM_MASTER_KEY`, `UI_PASSWORD`, and `POSTGRES_PASSWORD` are not secure. Replace them if you expose the proxy beyond localhost.
 
-### 2. Start the proxy
+### 2. First-run authentication
+
+GitHub Copilot uses OAuth device flow. On first start, LiteLLM shows a URL and a device code. Open the URL, enter the code, done. The token goes to `~/.config/litellm/github_copilot/` and refreshes on its own.
+
+**Option A (recommended):** run on your host:
 
 ```bash
 ./start_proxy.sh
 ```
 
-The proxy starts on port **4000** by default. Override with `LITELLM_PORT` in your `.env`.
+This uses your active Python interpreter and runs LiteLLM in an isolated `uv` runtime, installing `litellm[proxy]` and the required DNS packages. Set `PYTHON_BIN` to use a specific interpreter.
 
-### 3. Use with Claude Code
+> **Behind a corporate proxy?** Stick with Option A. Docker's bridge network has its own DNS resolver that may not reach GitHub's OAuth endpoints.
 
-In a separate terminal:
+**Option B:** interactive Docker run:
 
 ```bash
-export ANTHROPIC_BASE_URL=http://localhost:4000
-export ANTHROPIC_AUTH_TOKEN=<your-LITELLM_MASTER_KEY>
-claude
+docker run --rm -it \
+  --env-file .env \
+  -v "$(pwd)/litellm_config.yaml:/app/config.yaml:ro" \
+  -v "$HOME/.config/litellm/github_copilot:/root/.config/litellm/github_copilot" \
+  -p 4000:4000 \
+  ghcr.io/berriai/litellm:v1.86.1 \
+  --config /app/config.yaml --port 4000
 ```
+
+Both options write the token to the same path, which [docker compose](#running-with-docker-compose) mounts into the container.
 
 ## Configuring Claude Code
 
-Claude Code needs two environment variables to connect through the proxy. You can set them in different ways depending on your workflow.
-
-See also the official LiteLLM guide: [Use Claude Code with Non-Anthropic Models](https://docs.litellm.ai/docs/tutorials/claude_non_anthropic_models).
-
-### Option A: Environment variables (per session)
-
-Set them in your shell before launching Claude Code:
-
-```bash
-export ANTHROPIC_BASE_URL=http://localhost:4000
-export ANTHROPIC_AUTH_TOKEN=<your-LITELLM_MASTER_KEY>
-claude
-```
-
-### Option B: Claude Code settings (persistent)
-
-Run `claude config` or edit `~/.claude/settings.json`:
+Edit `~/.claude/settings.json` (or run `claude config`):
 
 ```json
 {
@@ -99,37 +87,26 @@ Run `claude config` or edit `~/.claude/settings.json`:
 }
 ```
 
-This persists across sessions so you don't need to export variables each time.
-
-### Option C: VS Code settings (for Copilot Chat with Claude Code)
-
-Add to your VS Code `settings.json`:
-
-```json
-{
-  "claude-code.env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:4000",
-    "ANTHROPIC_AUTH_TOKEN": "<your-LITELLM_MASTER_KEY>"
-  }
-}
-```
-
 ### Choosing a model
 
-By default Claude Code picks a model name like `claude-sonnet-4-20250514`. Since the proxy uses a wildcard, any model name is accepted and routed to your Azure deployment. You can also specify a model explicitly:
+It is recommended to always pass `--model` since the model picker in Claude Code's UI only reliably shows Haiku and Sonnet. For more information [see known limitations](#known-limitations). So Haiku and Sonnet do not need `--model`, but everything else does. Use the `model_name` from [litellm_config.yaml](litellm_config.yaml), dropping the trailing `*`. Example: `model_name: claude-opus-4-7*` becomes `--model claude-opus-4-7`.
 
 ```bash
-claude --model gpt-5.3-codex
+claude --model <model_name>
 ```
 
-### 4. Verify with curl
+#### Note on available models in litellm_config.yaml
+
+Your copilot licence might have more available models than listed in the respective config. I used the [litellm documentation](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) to find matching models. If litellm does not have a translation layer for the specific model, it can't be used.
+
+### Verify with curl
 
 ```bash
 curl -X POST http://localhost:4000/v1/messages \
   -H "Authorization: Bearer <your-LITELLM_MASTER_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-4-6",
     "max_tokens": 100,
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
@@ -137,77 +114,42 @@ curl -X POST http://localhost:4000/v1/messages \
 
 ## How it works
 
-The `litellm_config.yaml` uses a wildcard (`model_name: "*"`) so any model name sent by the client is routed to your single Azure deployment. The `start_proxy.sh` script uses `uv run` with `UV_NATIVE_TLS=true` to use the system certificate store, avoiding SSL issues behind corporate proxies.
+`litellm_config.yaml` maps incoming model names to GitHub Copilot models. Wildcard suffixes on `model_name` entries catch date-stamped variants like `claude-sonnet-4-6-20250514`. `start_proxy.sh` sets `UV_NATIVE_TLS=true` so the proxy uses the system certificate store, avoiding SSL errors behind corporate proxies.
 
-## Running with Docker
+## Running with Docker Compose
 
-The Dockerfile uses the [official LiteLLM Docker image](https://docs.litellm.ai/docs/proxy/deploy) — no need to install uv or Python separately.
+After OAuth, docker compose is how you run this day to day. It starts LiteLLM and PostgreSQL together; the database adds virtual keys and spend tracking. The OAuth token directory mounts from your host.
 
-### Build the image
-
-```bash
-docker build -t litellm-claude-code-proxy .
-```
-
-### Run the container
+### Start
 
 ```bash
-docker run --env-file .env -p 4000:4000 litellm-claude-code-proxy
+docker compose up -d
 ```
 
-Or skip the build entirely and run the official image directly:
+Starts the proxy on port `4000` (override with `LITELLM_PORT`) and PostgreSQL 18 with a persistent `pgdata` volume. The proxy waits for Postgres before starting.
+
+### Stop / clean up
 
 ```bash
-docker run \
-  --env-file .env \
-  -v $(pwd)/litellm_config.yaml:/app/config.yaml \
-  -p 4000:4000 \
-  docker.litellm.ai/berriai/litellm:main-stable \
-  --config /app/config.yaml --port 4000
+docker compose down        # stop containers (data preserved)
+docker compose down -v     # stop containers and delete the database volume
 ```
 
-The container reads all configuration from environment variables via the `.env` file.
+## Known limitations
 
-## Running with Docker Compose (Proxy + Database)
+**Model picker:** Claude Code's `/model` UI only reliably shows Haiku and Sonnet. LiteLLM returns the model list in OpenAI format but Claude Code expects Anthropic-native format ([LiteLLM #27180](https://github.com/BerriAI/litellm/issues/27180)). Use `--model` for everything else.
 
-Docker Compose sets up both the LiteLLM proxy and a PostgreSQL database, which enables virtual keys, spend tracking, and other DB-backed features.
+**Default model:** Claude Code defaults to `claude-opus-4-7` with 1M context. That variant is not in GitHub Copilot.
 
-### 1. Configure `.env`
+**Extended thinking:** Not supported via GitHub Copilot. Add `"alwaysThinkingEnabled": false` to `~/.claude/settings.json`.
 
-Make sure your `.env` includes the database variables (see `.env.example`):
+**Effort:** Claude code and copilot cli effort levels might not match perfectly. E.g. there is no `xhigh` or `max` effort available in copilot cli. I recommend to set default effort level to high via `"effortLevel": "high"` in `~/.claude/settings.json`. Try increasing effort manually via `/effort` in claude code and see if it works.
 
-```env
-POSTGRES_USER=litellm
-POSTGRES_PASSWORD=litellm
-POSTGRES_DB=litellm
-```
-
-The `DATABASE_URL` is assembled automatically from these variables in `docker-compose.yml` — you don't need to set it yourself.
-
-### 2. Start the stack
-
-```bash
-docker compose up --build
-```
-
-This starts:
-- **litellm** — the proxy on port `4000` (override with `LITELLM_PORT`)
-- **db** — PostgreSQL 16 with a persistent `pgdata` volume
-
-The proxy waits for Postgres to be healthy before starting.
-
-### 3. Stop / clean up
-
-```bash
-docker compose down          # stop containers (data is preserved in the volume)
-docker compose down -v       # stop containers and delete the database volume
-```
+**Litellm Proxy**: The litellm proxy always needs to be active when you want to use Claude Code.
 
 ## References
 
-- [LiteLLM Documentation](https://docs.litellm.ai/)
-- [Proxy Quick Start](https://docs.litellm.ai/docs/proxy/quick_start)
-- [Proxy CLI](https://docs.litellm.ai/docs/proxy/cli)
-- [Proxy Config Settings](https://docs.litellm.ai/docs/proxy/config_settings)
-- [Docker Quick Start & Model List Specification](https://docs.litellm.ai/docs/proxy/docker_quick_start#model-list-specification)
-- [Use Claude Code with Non-Anthropic Models](https://docs.litellm.ai/docs/tutorials/claude_non_anthropic_models)
+* [Claude Code on GitHub Copilot Subscription](https://www.dsebastien.net/claude-code-on-github-copilot-subscription/)
+* [LiteLLM GitHub Copilot Provider](https://docs.litellm.ai/docs/providers/github_copilot)
+* [Use Claude Code with Non-Anthropic Models](https://docs.litellm.ai/docs/tutorials/claude_non_anthropic_models)
+* [LiteLLM Proxy Config Settings](https://docs.litellm.ai/docs/proxy/config_settings)
