@@ -2,6 +2,10 @@
 
 Routes Claude Code through your GitHub Copilot subscription. Claude Code points at the local proxy as if it were Anthropic's API; LiteLLM translates and forwards requests to GitHub Copilot.
 
+## Important note
+
+**There is one bug present in current litellm versions which prevents sending requests while using any `thinking/effort` level. This is a breaking bug. I do not know when this get included in litellm. Until then you need to build a local litellm image from [this branch](https://github.com/ririnto/litellm/tree/feat/copilot-anthropic-messages-native) and set it in docker-compose-yml accordingly.**
+
 ## Acknowledgments
 
 This is a fork of [National Bank Belgium's LiteLLM Claude Code Proxy](https://github.com/NationalBankBelgium/litellm-claude-code-proxy). It is based on [dsebastiens tutorial](https://www.dsebastien.net/claude-code-on-github-copilot-subscription/). I optimized the workflow and the documentation quite a bit and extended for further shortcomings.
@@ -136,8 +140,6 @@ docker compose down -v     # stop containers and delete the database volume
 ```
 
 ## Known limitations
-
-**Model picker:** Claude Code's `/model` UI only reliably shows Haiku and Sonnet. LiteLLM returns the model list in OpenAI format but Claude Code expects Anthropic-native format ([LiteLLM #27180](https://github.com/BerriAI/litellm/issues/27180)). Use `--model` for everything else.
 
 **Default model:** Claude Code defaults to `claude-opus-4-7` with 1M context. That variant is not in GitHub Copilot.
 
