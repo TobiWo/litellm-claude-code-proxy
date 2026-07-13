@@ -2,10 +2,6 @@
 
 Routes Claude Code through your GitHub Copilot subscription. Claude Code points at the local proxy as if it were Anthropic's API; LiteLLM translates and forwards requests to GitHub Copilot.
 
-## Important note
-
-**There is one bug present in current litellm versions which prevents sending requests while using any `thinking/effort` level. This is a breaking bug. I do not know when this get included in litellm. Until then you need to build a local litellm image from [this branch](https://github.com/ririnto/litellm/tree/feat/copilot-anthropic-messages-native) and set it in docker-compose-yml accordingly.**
-
 ## Acknowledgments
 
 This is a fork of [National Bank Belgium's LiteLLM Claude Code Proxy](https://github.com/NationalBankBelgium/litellm-claude-code-proxy). It is based on [dsebastiens tutorial](https://www.dsebastien.net/claude-code-on-github-copilot-subscription/). I optimized the workflow and the documentation quite a bit and extended for further shortcomings.
@@ -16,6 +12,7 @@ This is a fork of [National Bank Belgium's LiteLLM Claude Code Proxy](https://gi
 * [uv](https://docs.astral.sh/uv/) installed
 * Python 3.11–3.13 in PATH (3.14 is not supported — some dependency incompatibility)
 * A virtual environment is recommended (conda, venv, etc.)
+* jq (only necessary if you want to fetch your own available models, see [Fetching your own available models](#fetching-your-own-available-models))
 
 ## Setup
 
@@ -103,6 +100,46 @@ claude --model <model_name>
 
 Your copilot licence might have more available models than listed in the respective config. I used the [litellm documentation](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) to find matching models. If litellm does not have a translation layer for the specific model, it can't be used.
 
+#### Fetching your own available models
+
+`model_prices_and_context_window.json` only carries cost/context-window metadata and lags behind what GitHub Copilot actually offers — it is not the source of truth for which models your subscription can use. To get the exact model IDs available to you, query the Copilot API directly with the same token VS Code/LiteLLM use:
+
+1. Let LiteLLM complete the OAuth device flow once (see [First-run authentication](#2-first-run-authentication)) so `~/.config/litellm/github_copilot/api-key.json` exists.
+2. Read the token and API host from that file:
+
+   ```bash
+   cat ~/.config/litellm/github_copilot/api-key.json | jq --indent 4
+   ```
+
+   It has an `.token` field (used as the bearer token) and an `.endpoints.api` field (the correct host for your plan — individual, business, or enterprise; this can differ from the generic `api.githubcopilot.com`).
+3. Query the model catalog:
+
+   ```bash
+   curl -s "<endpoints.api>/models" \
+     -H "Authorization: Bearer <token>" \
+     -H "Copilot-Integration-Id: vscode-chat" \
+     -H "Editor-Version: vscode/<your-installed-version>"
+   ```
+
+Each entry's `id` field is the exact string to use after `github_copilot/` in `litellm_params.model`. Each entry also lists `supported_endpoints` (see the next section, this determines whether you need extra config).
+
+#### Some models need extra config: `/responses` vs `/chat/completions`
+
+GitHub Copilot models don't all speak the same wire API. Check the `supported_endpoints` field from the model catalog response above:
+
+* Models with `/chat/completions` in `supported_endpoints` (all current Claude models, most GPT models) work with a plain entry.
+* Models with only `/responses` in `supported_endpoints` (e.g. the `gpt-5.3-codex`, `gpt-5.5`, and `gpt-5.6-*` family) need `model_info.mode: responses`, otherwise you get a `400 ... is not accessible via the /chat/completions endpoint` error:
+
+  ```yaml
+  - model_name: gpt-5-6-luna
+    model_info:
+      mode: responses
+    litellm_params:
+      model: github_copilot/gpt-5.6-luna
+  ```
+
+Since these Responses-API models get translated on the fly through Claude Code's Anthropic-style `/v1/messages` endpoint, expect the translation to be lossier than for native chat-completions models (e.g. streaming or tool-call edge cases).
+
 ### Verify with curl
 
 ```bash
@@ -141,7 +178,7 @@ docker compose down -v     # stop containers and delete the database volume
 
 ## Known limitations
 
-**Default model:** Claude Code defaults to `claude-opus-4-7` with 1M context. That variant is not in GitHub Copilot.
+**Default model:** Claude Code defaults to `claude-opus-4-8` with 1M context. That variant is not in GitHub Copilot.
 
 **Extended thinking:** Not supported via GitHub Copilot. Add `"alwaysThinkingEnabled": false` to `~/.claude/settings.json`.
 
