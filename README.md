@@ -180,9 +180,7 @@ docker compose down -v     # stop containers and delete the database volume
 
 **Default model:** Claude Code defaults to `claude-opus-4-8` with 1M context. That variant is not in GitHub Copilot.
 
-**Extended thinking:** Not supported via GitHub Copilot. Add `"alwaysThinkingEnabled": false` to `~/.claude/settings.json`.
-
-**Effort:** Claude code and copilot cli effort levels might not match perfectly. E.g. there is no `xhigh` or `max` effort available in copilot cli. I recommend to set default effort level to high via `"effortLevel": "high"` in `~/.claude/settings.json`. Try increasing effort manually via `/effort` in claude code and see if it works.
+**Effort:** Claude code and copilot cli effort levels might not match perfectly. E.g. there is no `xhigh` or `max` effort available in copilot cli. I recommend to set default effort level to high via `"effortLevel": "high"` in `~/.claude/settings.json`. Try increasing effort manually via `/effort` in claude code and see if it works. From my experience this is indeed model dependent. Anthropic models understand all effort levels ofc. Not sure about GPT models.
 
 **Litellm Proxy**: The litellm proxy always needs to be active when you want to use Claude Code.
 
