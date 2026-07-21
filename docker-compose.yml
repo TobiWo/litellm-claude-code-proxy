@@ -20,6 +20,8 @@ services:
       db:
         condition: "service_healthy"
     restart: "unless-stopped"
+    networks:
+      - "litellm-cc-proxy"
 
   db:
     container_name: "litellm-claude-code-proxy-db"
@@ -36,6 +38,12 @@ services:
       timeout: "5s"
       retries: 5
     restart: "unless-stopped"
+    networks:
+      - "litellm-cc-proxy"
 
 volumes:
   pgdata:
+
+networks:
+  litellm-cc-proxy:
+    name: "litellm-cc-proxy"
