@@ -9,13 +9,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$SCRIPT_DIR/.env"
-ENV_EXAMPLE_FILE="$SCRIPT_DIR/.env.example"
-LITELLM_CONFIG_FILE="$SCRIPT_DIR/litellm_config.yaml"
-START_PROXY_SCRIPT="$SCRIPT_DIR/start_proxy.sh"
-COPILOT_TOKEN_FILE="$HOME/.config/litellm/github_copilot/api-key.json"
-CLAUDE_SETTINGS_DIR="$HOME/.claude"
-CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
+# shellcheck source=scripts/common.sh
+. "$SCRIPT_DIR/scripts/common.sh"
 
 # ------------------------------------------------------------------------
 # Restrained terminal UI
@@ -98,71 +93,33 @@ $1"
     fi
 }
 
-# uv
-if command -v uv >/dev/null 2>&1; then
-    ok "uv found ($(command -v uv))"
+if check_uv; then
+    ok "$CHECK_MESSAGE"
 else
-    fail_line "uv not found"
+    fail_line "$CHECK_MESSAGE"
     add_error "Install uv: https://docs.astral.sh/uv/getting-started/installation/"
 fi
 
-# Python, honoring PYTHON_BIN
-PYTHON_BIN="${PYTHON_BIN:-}"
-if [ -n "$PYTHON_BIN" ]; then
-    if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-        fail_line "PYTHON_BIN='$PYTHON_BIN' is not executable"
-        add_error "Set PYTHON_BIN to a working Python 3.11-3.13 interpreter, or unset it to allow auto-detection."
-        PYTHON_BIN=""
-    fi
-elif command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python)"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python3)"
+if check_python; then
+    ok "$CHECK_MESSAGE"
 else
-    fail_line "neither 'python' nor 'python3' found in PATH"
-    add_error "Install Python 3.11-3.13 and ensure it is in PATH, or set PYTHON_BIN."
+    fail_line "$CHECK_MESSAGE"
+    add_error "$CHECK_MESSAGE. Set PYTHON_BIN to override (Using venv or conda for virtual environments is recommended)."
 fi
 
-if [ -n "$PYTHON_BIN" ]; then
-    PYTHON_VERSION_OK="$("$PYTHON_BIN" -c '
-import sys
-major, minor = sys.version_info[0], sys.version_info[1]
-print("1" if (major == 3 and 11 <= minor <= 13) else "0")
-' 2>/dev/null || echo "0")"
-
-    PYTHON_VERSION_STRING="$("$PYTHON_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "unknown")"
-
-    if [ "$PYTHON_VERSION_OK" = "1" ]; then
-        ok "Python $PYTHON_VERSION_STRING found ($PYTHON_BIN)"
-    else
-        fail_line "$PYTHON_BIN is Python $PYTHON_VERSION_STRING"
-        add_error "Python 3.11-3.13 is required (found $PYTHON_VERSION_STRING at $PYTHON_BIN). Set PYTHON_BIN to override."
-    fi
-fi
-
-# Docker
-if command -v docker >/dev/null 2>&1; then
-    ok "docker found ($(command -v docker))"
+DOCKER_COMPOSE_AVAILABLE=0
+if check_docker_compose; then
+    DOCKER_COMPOSE_AVAILABLE=1
+    ok "$CHECK_MESSAGE"
 else
-    fail_line "docker not found"
-    add_error "Install Docker: https://docs.docker.com/get-docker/"
+    warn "$CHECK_MESSAGE"
+    detail "Setup can continue with the reduced native LiteLLM-only fallback."
 fi
 
-# docker compose plugin
-if command -v docker >/dev/null 2>&1; then
-    if docker compose version >/dev/null 2>&1; then
-        ok "docker compose plugin available"
-    else
-        fail_line "'docker compose' is not working"
-        add_error "Install/enable the Docker Compose plugin: https://docs.docker.com/compose/install/"
-    fi
-fi
-
-# claude
-if command -v claude >/dev/null 2>&1; then
-    ok "claude found ($(command -v claude))"
+if check_claude; then
+    ok "$CHECK_MESSAGE"
 else
-    fail_line "claude not found"
+    fail_line "$CHECK_MESSAGE"
     add_error "Install Claude Code: https://docs.claude.com/en/docs/claude-code/setup"
 fi
 
@@ -175,6 +132,7 @@ if [ -n "$PREREQ_ERRORS" ]; then
     exit 1
 fi
 
+detail ""
 detail "A GitHub Copilot subscription (personal or enterprise) is required for authentication; this cannot be checked locally."
 
 # ------------------------------------------------------------------------
@@ -195,53 +153,13 @@ else
     detail "Edit .env now if you want to change the port, master key, or credentials."
 fi
 
-# Load .env into this shell's environment without letting an unset
-# variable trip `set -u`, and without executing arbitrary shell code:
-# read the file line by line and only accept simple KEY=VALUE assignments.
-if [ ! -f "$ENV_FILE" ]; then
-    fail_line ".env is missing after setup; cannot continue"
+if ! load_env; then
+    fail_line "$CHECK_MESSAGE"
     exit 1
 fi
 
-while IFS= read -r line || [ -n "$line" ]; do
-    # Strip a single trailing CR so .env files edited/saved on Windows or
-    # WSL with CRLF line endings parse the same as LF-only files.
-    line="${line%$'\r'}"
-    case "$line" in
-        ''|'#'*)
-            continue
-            ;;
-        *=*)
-            key="${line%%=*}"
-            value="${line#*=}"
-            case "$key" in
-                *[!A-Za-z0-9_]*|'')
-                    continue
-                    ;;
-            esac
-            export "$key=$value"
-            ;;
-    esac
-done < "$ENV_FILE"
-
-if [ -z "${LITELLM_PORT:-}" ]; then
-    fail_line "LITELLM_PORT is not set in .env"
-    exit 1
-fi
-
-case "$LITELLM_PORT" in
-    ''|*[!0-9]*)
-        fail_line "LITELLM_PORT='$LITELLM_PORT' is not a valid port number"
-        exit 1
-        ;;
-esac
-if [ "$LITELLM_PORT" -lt 1 ] || [ "$LITELLM_PORT" -gt 65535 ]; then
-    fail_line "LITELLM_PORT='$LITELLM_PORT' is out of range (1-65535)"
-    exit 1
-fi
-
-if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
-    fail_line "LITELLM_MASTER_KEY is not set in .env"
+if ! validate_proxy_env; then
+    fail_line "$CHECK_MESSAGE"
     exit 1
 fi
 
@@ -262,11 +180,11 @@ else
     detail "one-time code. Open the URL, enter the code, and approve access."
     detail "The token is then stored locally and refreshes on its own."
     printf '\n'
-    if [ ! -x "$START_PROXY_SCRIPT" ]; then
-        fail_line "$START_PROXY_SCRIPT is missing or not executable"
+    if [ ! -x "$AUTH_SCRIPT" ]; then
+        fail_line "$AUTH_SCRIPT is missing or not executable"
         exit 1
     fi
-    "$START_PROXY_SCRIPT" --auth-only
+    "$AUTH_SCRIPT"
     if [ ! -f "$COPILOT_TOKEN_FILE" ]; then
         fail_line "Authentication did not complete (token not found at $COPILOT_TOKEN_FILE)"
         exit 1
@@ -453,14 +371,31 @@ fi
 
 printf '\n%s\n' "${BOLD}Setup complete${RESET}"
 printf '%s\n' "----------------------------------------"
+
+printf '\n'
+printf '  %s\n' "${BOLD}Edit .env now if you want to change the port, master key, or credentials.${RESET}"
+printf '\n'
+
 if [ "${SKIP_CLAUDE_CONFIG:-0}" = "1" ]; then
     warn "Claude Code settings were not altered."
     detail "The proxy workflow will not work unless they are already configured."
     printf '\n'
 fi
-info "Next steps:"
+if [ "$DOCKER_COMPOSE_AVAILABLE" -eq 1 ]; then
+    info "Start the proxy (recommended, full stack):"
+    printf '  %s\n' "${BOLD}docker compose up -d${RESET}"
+    detail "Includes PostgreSQL, persistence, restart policy, virtual keys, and spend tracking."
+    printf '\n'
+    info "Native fallback (LiteLLM only):"
+    printf '  %s\n' "${BOLD}./scripts/start_proxy.sh${RESET}"
+else
+    warn "The recommended Docker Compose full-stack runtime is unavailable."
+    info "Start the reduced native fallback (LiteLLM only):"
+    printf '  %s\n' "${BOLD}./scripts/start_proxy.sh${RESET}"
+fi
+
 printf '\n'
-printf '  %s\n' "${BOLD}docker compose up -d${RESET}"
+info "Start Claude Code Example:"
 printf '  %s\n' "${BOLD}claude --model claude-sonnet-5${RESET}"
 printf '\n'
-detail "The proxy (docker compose) must stay running while you use Claude Code."
+detail "The proxy must stay running while you use Claude Code."
