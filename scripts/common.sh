@@ -87,7 +87,7 @@ check_python() {
         return 0
     fi
 
-    CHECK_MESSAGE="Python 3.11-3.13 is required (found $PYTHON_VERSION_STRING at $PYTHON_BIN)"
+    CHECK_MESSAGE="Python 3.11-3.13 is required (found $PYTHON_VERSION_STRING at $PYTHON_BIN; overwrite with export PYTHON_BIN=/path/to/python3.11+)"
     return 1
 }
 

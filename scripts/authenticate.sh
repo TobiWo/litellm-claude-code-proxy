@@ -8,14 +8,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/common.sh"
 
 usage() {
-    printf '%s\n' "Usage: $(basename "$0")" >&2
+    printf '%s\n' "Usage: $(basename "$0") [--refresh]" >&2
     printf '%s\n' "Perform GitHub Copilot device authentication, then exit." >&2
+    printf '%s\n' "" >&2
+    printf '%s\n' "  --refresh  Refresh the cached Copilot API token. This may reuse the" >&2
+    printf '%s\n' "             stored OAuth credential or show the browser device flow." >&2
 }
 
+REFRESH=0
 case "${1:-}" in
     '')
         ;;
+    --refresh)
+        REFRESH=1
+        ;;
     -h|--help)
+        if [ "$#" -ne 1 ]; then
+            printf '%s\n' "Error: help cannot be combined with other arguments." >&2
+            usage
+            exit 1
+        fi
         usage
         exit 0
         ;;
@@ -26,7 +38,7 @@ case "${1:-}" in
         ;;
 esac
 if [ "$#" -gt 1 ]; then
-    printf '%s\n' "Error: this command does not accept arguments." >&2
+    printf '%s\n' "Error: this command accepts at most one argument." >&2
     usage
     exit 1
 fi
@@ -49,7 +61,12 @@ if ! validate_proxy_env; then
     exit 1
 fi
 
-if [ -f "$COPILOT_TOKEN_FILE" ]; then
+if [ "$REFRESH" -eq 1 ]; then
+    if [ -f "$COPILOT_TOKEN_FILE" ]; then
+        printf '%s\n' "Refreshing the cached GitHub Copilot API token …"
+        rm -f "$COPILOT_TOKEN_FILE"
+    fi
+elif [ -f "$COPILOT_TOKEN_FILE" ]; then
     printf 'GitHub Copilot authentication already present at %s\n' "$COPILOT_TOKEN_FILE"
     exit 0
 fi

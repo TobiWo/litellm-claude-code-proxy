@@ -63,24 +63,19 @@ claude --model <model_name>
 
 ### Note on available models in litellm_config.yaml
 
-Your copilot licence might have more or different available models than listed in the respective config. You can fetch available models via an API call:
+Your copilot licence might have more or different available models than listed in the respective config. Fetch the catalog for your subscription with:
 
-1. Run `./setup.sh` so `~/.config/litellm/github_copilot/api-key.json` exists.
-2. Read the token and API host from that file:
+```bash
+./scripts/fetch_copilot_models.sh
+```
 
-   ```bash
-   cat ~/.config/litellm/github_copilot/api-key.json | jq --indent 4
-   ```
+Store the response in a file with:
 
-   It has an `.token` field (used as the bearer token) and an `.endpoints.api` field (the correct host for your plan — individual, business, or enterprise; this can differ from the generic `api.githubcopilot.com`).
-3. Query the model catalog:
+```bash
+./scripts/fetch_copilot_models.sh --output github-models.json
+```
 
-   ```bash
-   curl -s "<endpoints.api>/models" \
-     -H "Authorization: Bearer <token>" \
-     -H "Copilot-Integration-Id: vscode-chat" \
-     -H "Editor-Version: vscode/<your-installed-version>"
-   ```
+The helper uses the subscription-specific API endpoint and refreshes authentication once if the cached API token is rejected. It may show the browser device flow if no reusable authentication is available.
 
 Each entry's `id` field is the exact string to use after `github_copilot/` in `litellm_params.model`. Each entry also lists `supported_endpoints` (see the next section, this determines whether you need extra config).
 
@@ -102,6 +97,8 @@ GitHub Copilot models don't all speak the same wire API. Check the `supported_en
 Since these Responses-API models get translated on the fly through Claude Code's Anthropic-style `/v1/messages` endpoint, expect the translation to be lossier than for native chat-completions models (e.g. streaming or tool-call edge cases).
 
 ## Known limitations
+
+**Existing ENV variables:** Please be sure to not have any conflicting Claude Code / Anthropic env variables active in your .bashrc or .zshrc.
 
 **Multi LLM provider setup:** This setup is specifically for GitHub Copilot. If you want to use multiple LLM providers like e.g. additionally connecting to native Anthropic API or Amazon Bedrock hosted Claude instances you need to do further manually editing of Claude Codes settings.json.
 
