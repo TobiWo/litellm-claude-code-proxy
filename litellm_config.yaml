@@ -5,6 +5,9 @@ litellm_settings:
 general_settings:
   allow_requests_on_db_unavailable: true
 model_list:
+  - model_name: claude-opus-5
+    litellm_params:
+      model: github_copilot/claude-opus-5
   - model_name: claude-opus-4-8
     litellm_params:
       model: github_copilot/claude-opus-4.8
