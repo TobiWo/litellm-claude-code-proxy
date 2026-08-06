@@ -6,6 +6,10 @@ Routes Claude Code through your GitHub Copilot subscription. Claude Code points 
 
 This is a fork of [National Bank Belgium's LiteLLM Claude Code Proxy](https://github.com/NationalBankBelgium/litellm-claude-code-proxy). It is based on [dsebastiens tutorial](https://www.dsebastien.net/claude-code-on-github-copilot-subscription/). I optimized the workflow and the documentation quite a bit and extended for further shortcomings.
 
+## License
+
+The original upstream work remains under the [MIT License](LICENSE). All modifications and additions made in this fork are licensed under [PolyForm Noncommercial 1.0.0](LICENSE-MODIFICATIONS) — free for personal, educational, and other noncommercial use; commercial use of these changes requires permission from the author.
+
 ## Prerequisites
 
 * A GitHub Copilot subscription (personal or enterprise)
