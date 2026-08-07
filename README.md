@@ -100,13 +100,132 @@ GitHub Copilot models don't all speak the same wire API. Check the `supported_en
 
 Since these Responses-API models get translated on the fly through Claude Code's Anthropic-style `/v1/messages` endpoint, expect the translation to be lossier than for native chat-completions models (e.g. streaming or tool-call edge cases).
 
+## PII guardrail
+
+Every prompt is scanned by [Microsoft Presidio](https://github.com/microsoft/presidio) before it leaves your machine. Detected sensitive data is **masked**, not blocked — the value is replaced with a placeholder (`<EMAIL_ADDRESS>`) and the request continues, so Claude Code keeps working and the model never sees the real value.
+
+Presidio runs as two sidecar containers (`presidio-analyzer`, `presidio-anonymizer`) started by `docker compose up -d`. No Claude Code configuration changes.
+
+Masked entities (`litellm_config.yaml`, `guardrails:` block): `CREDIT_CARD`, `IBAN_CODE`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `IP_ADDRESS`, `US_SSN`.
+
+Verify it is live:
+
+```bash
+curl -s http://localhost:4000/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $LITELLM_MASTER_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{"model":"claude-sonnet-5","max_tokens":100,
+       "messages":[{"role":"user","content":"Repeat this back exactly: contact me at max.mustermann@example.com"}]}'
+```
+
+The reply must contain `<EMAIL_ADDRESS>`, not the real address. Note *why*: `mode: pre_call` masks the **request**, so the model literally receives the placeholder and echoes it back. Nothing inspects the response — there is no response-side guardrail to debug if this ever fails.
+
+**No name detection (and why):** every enabled entity is a deterministic pattern match (checksums, fixed formats) with near-zero false positives. The NER-based (machine-learned) entities are deliberately **not** enabled. spaCy's NER emits a flat score of `0.85` for every hit — real names and code identifiers alike — so **no threshold separates them**, and lowering `presidio_score_thresholds` only masks *more*, never less (it is a floor, not a target). `LOCATION` was dropped first: it masked ordinary parameter names such as `austin` and `jordan`. `PERSON` was dropped after spend logs showed it masking 5–14 identifiers per request during normal coding work — it was silently degrading prompts with no error to indicate why. If you want name masking back, add `PERSON: "MASK"` to `pii_entities_config`, but expect that cost; there is no threshold that will fix it. Inspect what got masked in the LiteLLM UI logs at `http://localhost:4000/ui`.
+
+**Disabling:** set `default_on: false` in the `guardrails:` block. This flag is load-bearing — Claude Code speaks plain Anthropic Messages and cannot send a per-request `guardrails: [...]` array, so without `default_on: true` the guard loads but silently never runs.
+
+**Language:** English only. Structured entities (email, IBAN, credit card, phone) are language-independent; only `PERSON`/`LOCATION` detection is language-bound. German NER would need a custom analyzer image with `de_core_news_md`.
+
+**Native fallback caveat:** `PRESIDIO_*_API_BASE` in `.env` uses Docker service DNS names that do not resolve outside Compose. If you run `./scripts/start_proxy.sh`, publish the Presidio ports and override the endpoints to `http://localhost:<port>`, or set `default_on: false` to run without the guard.
+
+## Secret guardrail
+
+A second guardrail (`secret-filter` in `litellm_config.yaml`) masks credentials before the prompt leaves your machine, using LiteLLM's built-in `litellm_content_filter` with custom regex patterns:
+
+| Pattern | Matches |
+| --- | --- |
+| `aws_key` | AWS access key IDs (`AKIA`/`ASIA`/`ABIA`/`ACCA` + 16 base32 chars) |
+| `aws_secret` | `aws_secret_access_key = <40 chars>` — the **assignment**, not a bare key (see below) |
+| `gh_token` | GitHub classic tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` + 36) |
+| `gh_finegrained_pat` | GitHub fine-grained PATs (`github_pat_` + 82) |
+| `gitlab_token` | GitLab tokens: `glpat-`, `gloas-`, `gldt-`, `glrt-`/`glrtr-`, `glcbt-`, `glptt-`, `glft-`, `glimt-`, `glagent-`, `glwt-`, `glsoat-`, `glffct-` |
+| `gitlab_routable_token` | GitLab's newer routable format (`<prefix><base64>.<len><crc32>`) |
+| `gitlab_runner_registration` | Legacy runner registration tokens (`GR1348941…`) |
+| `azure_client_secret` | Azure AD/Entra client secrets (`…\dQ~…`) |
+| `azure_storage_key` | `AccountKey=`/`SharedAccessKey=` + 86-char base64 (storage, Cosmos, Service Bus) |
+| `gcp_api_key` | Google API keys (`AIza` + 35) |
+| `gcp_oauth_secret` | Google OAuth client secrets (`GOCSPX-` + 28) |
+| `private_key` | PEM blocks (`-----BEGIN … PRIVATE KEY-----` … `-----END`), incl. GCP service-account JSON |
+| `slack_token` | Slack tokens (`xoxb-`, `xoxp-`, `xoxo-`, `xoxa-`, `xoxs-`) |
+
+A match is replaced with `[<PATTERN_NAME>_REDACTED]` and the request continues, same as the PII guardrail. Add your own entries under `patterns:` — anything with a stable prefix is a good candidate; anything relying on entropy is not (see below).
+
+**What deliberately cannot be caught.** Two categories have no distinguishing prefix, so matching them means matching *shape*, which is what broke `hide-secrets`:
+
+* **AWS secret access keys (the SK of an AK/SK pair)** are 40 chars of `[A-Za-z0-9/+=]` with no marker. That is also the shape of a SHA-1 hash, a git object ID, and any base64 blob. gitleaks *deleted* its rule for this and has not merged a replacement. The `aws_secret` pattern above therefore anchors on the `aws_secret_access_key =` assignment — a secret key pasted on its own, with no surrounding keyword, **will not be caught**.
+* **Passwords.** There is no password pattern here at all, deliberately. A strong random password has no prefix and no structure to anchor on — matching it means matching *shape*, which is the failure mode described below. trufflehog ships its generic detector *disabled by default*; gitleaks' equivalent needs a keyword, an assignment operator, an entropy threshold of 3.5, and roughly a hundred hand-maintained suppressions, and still has open false-positive bugs. A keyword-anchored version (`password = "…"`) was written and dropped: it missed the common real cases (bare values, unquoted, YAML-style) while risking false positives on test fixtures and documentation — a poor trade for a pattern that fires mainly on strings you may have wanted the model to see.
+
+Also undetectable by design: legacy Azure AD secrets and pre-`GOCSPX-` Google OAuth secrets (both unprefixed), and GitLab PATs on self-managed instances where the `glpat-` prefix has been reconfigured.
+
+Verify it is live:
+
+```bash
+curl -s http://localhost:4000/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $LITELLM_MASTER_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{"model":"claude-sonnet-5","max_tokens":100,
+       "messages":[{"role":"user","content":"Repeat this back exactly: key AKIAIOSFODNN7EXAMPLE and const total = calculateTotal(items);"}]}'
+```
+
+The reply must contain `[AWS_KEY_REDACTED]` **and** `const total = calculateTotal(items);` intact. The intact code is the real regression check — see the next paragraph for what it guards against.
+
+**Why not LiteLLM's built-in `hide-secrets` guardrail:** it is deliberately not used, and should not be added. It wraps Yelp's `detect-secrets`, whose entropy plugins flag ordinary English words. Tested on `Creds AKIAIOSFODNN7EXAMPLE. Code: const total = calculateTotal(items);` it matched `Creds`, `const`, `total`, `items`, `Code`, `7E`, `ca`, and `ed` alongside the real key. LiteLLM then applies those matches through a sequential `str.replace` loop, so replacing `Code` first rewrote the string and the later AWS-key replacement **missed** — the credential reached the model unredacted while the surrounding prose was destroyed. Plain prose degrades the same way: `Refactor the cached loader and fix the deprecated retry logic in scheduler.py` came back as `[REDACTED] [REDACTED] ... [REDACTED].[REDACTED]`. `litellm_content_filter` masks by *span* instead, which is why code and prose survive it.
+
+**Why there is no prompt-injection scanning:** tested and rejected. With `litellm_content_filter`'s injection categories, jailbreak-only detection caught 0 of 5 real injections while blocking a legitimate coding prompt; enabling all categories caught 2 of 4 but false-positived on 3 of 4 legitimate prompts. Published measurements agree — dedicated classifiers (PromptGuard 2, LlamaGuard) score 37.3% and 27.4% on indirect injection and cannot parse agentic tool-call formats. It would break normal work without providing protection.
+
+### Checking what got masked
+
+Every request records which guardrails ran and what they caught, in the `metadata.guardrail_information` field of the `LiteLLM_SpendLogs` table. Two ways to read it.
+
+**LiteLLM UI** — `http://localhost:4000/ui`, Logs view. Expand a request to see the guardrail entries.
+
+**Directly in Postgres** — useful for "did I ever leak a secret?", which the UI answers slowly:
+
+```bash
+docker compose exec db psql -U "${POSTGRES_USER:-litellm}" -d "${POSTGRES_DB:-litellm}" -c "
+SELECT s.\"startTime\",
+       g->>'guardrail_name' AS guardrail,
+       g->'masked_entity_count' AS masked
+FROM \"LiteLLM_SpendLogs\" s,
+     jsonb_array_elements(s.metadata::jsonb -> 'guardrail_information') g
+WHERE jsonb_typeof(s.metadata::jsonb -> 'guardrail_information') = 'array'
+  AND g->'masked_entity_count' <> '{}'::jsonb
+ORDER BY s.\"startTime\" DESC LIMIT 20;"
+```
+
+A row from the secret filter looks like:
+
+```json
+{
+  "guardrail_name": "secret-filter",
+  "guardrail_status": "success",
+  "detection_method": "regex",
+  "patterns_checked": 4,
+  "masked_entity_count": { "aws_key": 1 },
+  "match_details": "REDACTED_BY_LITELM",
+  "guardrail_response": "REDACTED_BY_LITELM"
+}
+```
+
+**A nonzero `masked_entity_count` for `secret-filter` means a credential was caught before it left your machine** — the guardrail worked, but the secret was in a prompt, so treat it as a signal to check your workflow (and rotate the credential if you are unsure it was a test value).
+
+**What you cannot get from this:** *which* credential matched. `match_details` and `guardrail_response` are stored as `REDACTED_BY_LITELM` — LiteLLM strips them unless `store_prompts_in_spend_logs: true` is set, and that flag writes the caught secret into the local database in plaintext, defeating the guardrail in order to observe it. It is deliberately left off. You get "an `aws_key` was masked at 14:32", not the key itself; identifying which one means looking at what you were doing at that time.
+
+**This is not leak detection for anything that bypasses the proxy.** It only sees prompts that went through LiteLLM. A secret committed to git, pasted into a browser, or sent by a Claude Code instance pointed at a different endpoint is invisible here.
+
+**Secret scanning for the repo itself** (as opposed to prompts) belongs in pre-commit/CI, not in the request path. `gitleaks` is clean on the payloads that break `detect-secrets`, but at ~0.5–0.8s per invocation it is too slow to run inline on every prompt.
+
 ## Known limitations
 
 **Existing ENV variables:** Please be sure to not have any conflicting Claude Code / Anthropic env variables active in your .bashrc or .zshrc.
 
 **Multi LLM provider setup:** This setup is specifically for GitHub Copilot. If you want to use multiple LLM providers like e.g. additionally connecting to native Anthropic API or Amazon Bedrock hosted Claude instances you need to do further manually editing of Claude Codes settings.json.
 
-**Default model:** Claude Code defaults to `claude-opus-4-8` with 1M context. That variant is not in GitHub Copilot.
+**Default model:** Claude Code defaults to `claude-opus-5` with 1M context. That variant is not in GitHub Copilot.
+
+**Beta header rejections (`400`):** If Claude Code fails with `Unexpected value(s) for the anthropic-beta header` or `Extra inputs are not permitted`, set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` in your shell and restart Claude Code. This is a *client-side* variable — it changes what Claude Code sends, so restarting the proxy or the Compose stack does nothing. The error is structural, not content-related: it fires on the shape of every request regardless of what you typed, so rephrasing the prompt will not help. The flag strips `anthropic-beta` headers and beta tool-schema fields (`defer_loading`, `eager_input_streaming`); standard tool fields (`name`, `description`, `input_schema`, `cache_control`) are preserved. Side effect: MCP servers keep working, but [MCP tool search](https://code.claude.com/docs/en/mcp) is disabled and all MCP tools load upfront on every request, costing context. Set it only if you actually hit the error. The flag has historically leaked some headers ([#22893](https://github.com/anthropics/claude-code/issues/22893)) — reported fixed in v2.1.77, with reproductions on later versions.
 
 **Effort:** Claude code and copilot cli effort levels might not match perfectly. E.g. there is no `xhigh` or `max` effort available in copilot cli. I recommend to set default effort level to high via `"effortLevel": "high"` in `~/.claude/settings.json`. Try increasing effort manually via `/effort` in claude code and see if it works. From my experience this is indeed model dependent. Anthropic models understand all effort levels ofc. Not sure about GPT models.
 
